@@ -12,8 +12,11 @@ import (
 
 type FFmpegDecoder struct {
 	in         io.ReadCloser
+	err        io.ReadCloser
 	cmd        *exec.Cmd
-	SampleRate int64
+	Filename   string
+	sampleRate int64
+	info       chan struct{}
 }
 
 func NewFFmpegDecoder(filename string) *FFmpegDecoder {
@@ -26,13 +29,26 @@ func NewFFmpegDecoder(filename string) *FFmpegDecoder {
 	if err != nil {
 		log.Fatal(err)
 	}
-	stderrReader := bufio.NewReader(stderr)
+	ffdec := &FFmpegDecoder{in: stdout, err: stderr, cmd: cmd, Filename: filename}
+        ffdec.info = make(chan struct{})
+	go ffdec.getInfo()
 	if err := cmd.Start(); err != nil {
 		log.Fatal(err)
 	}
-	ffdec := &FFmpegDecoder{in: stdout, cmd: cmd}
-	noSuchFile := []byte("no such file")
-	invalidData := []byte("invalid data found")
+	return ffdec
+}
+
+func (f *FFmpegDecoder) Close() error {
+	f.in.Close()
+	return f.err.Close()
+}
+
+func (f *FFmpegDecoder) getInfo() {
+	stderrReader := bufio.NewReader(f.err)
+	noSuchFile := []byte("No such file")
+	invalidData := []byte("Invalid data found")
+	durationLine := []byte("Duration:")
+	audioLine := []byte("Audio:")
 	metaRegEx, err := regexp.Compile("(\\d+)\\shz,\\s([^,]+),")
 	if err != nil {
 		log.Fatal(err)
@@ -44,21 +60,25 @@ func NewFFmpegDecoder(filename string) *FFmpegDecoder {
 			log.Fatal("failed to read from stderr: ", err)
 		}
 		if bytes.Contains(l, noSuchFile) || bytes.Contains(l, invalidData) {
-                        log.Fatal("invalid file: ", err)
+			log.Fatal("invalid file: ", string(l), f.Filename)
+		} else if bytes.Contains(l, durationLine) {
+			line = append(line, l...)
+		} else if bytes.Contains(l, audioLine) {
+			matches := metaRegEx.FindAll(line, 0)
+			if matches != nil {
+				if f.sampleRate, err = binary.ReadVarint(bytes.NewBuffer(matches[0])); err != nil {
+					log.Fatal("failed to get sample rate: ", err)
+				}
+			}
+			break
 		}
-		line = append(line, l...)
 	}
-	matches := metaRegEx.FindAll(line, 0)
-	if matches != nil {
-		if ffdec.SampleRate, err = binary.ReadVarint(bytes.NewBuffer(matches[0])); err != nil {
-			log.Fatal("failed to get sample rate: ", err)
-		}
-	}
-	return ffdec
+	close(f.info)
 }
 
-func (f *FFmpegDecoder) Close() error {
-	return f.in.Close()
+func (f *FFmpegDecoder) SampleRate() int64 {
+	<-f.info
+	return f.sampleRate
 }
 
 // test for portaudio

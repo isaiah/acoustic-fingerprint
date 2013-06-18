@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"launchpad.net/gocheck"
 	"testing"
 )
@@ -13,12 +14,13 @@ type S struct {
 
 var _ = gocheck.Suite(&S{})
 
-func (s *S) SetupSuite(c *gocheck.C) {
+func (s *S) SetUpSuite(c *gocheck.C) {
 	s.testData = "test_data/test.mp3"
 }
 
 func (s *S) TestNewFFmpeg(c *gocheck.C) {
 	ffDec := NewFFmpegDecoder(s.testData)
 	defer ffDec.Close()
-	c.Assert(ffDec.SampleRate, gocheck.Equals, 44100)
+	fmt.Println(ffDec.SampleRate())
+	c.Assert(ffDec.SampleRate(), gocheck.Equals, 44100)
 }
